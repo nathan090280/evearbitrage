@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EVE Arbitrage Scanner</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="brand">
+        <h1>EVE Arbitrage Scanner</h1>
+        <p>High-value market spread finder for Jita ↔ Amarr</p>
+      </div>
+    </header>
+
+    <main>
+      <section class="controls">
+        <form id="scanForm">
+          <label>
+            Min Profit (ISK)
+            <input
+              type="number"
+              id="minProfit"
+              name="minProfit"
+              placeholder="10000000"
+              min="0"
+            />
+          </label>
+
+          <label>
+            Min Margin (%)
+            <input
+              type="number"
+              id="minMargin"
+              name="minMargin"
+              placeholder="5"
+              min="0"
+              max="100"
+              step="0.1"
+            />
+          </label>
+
+          <button type="submit" id="scanButton">Scan Now</button>
+        </form>
+        <div class="status" id="status"></div>
+      </section>
+
+      <section class="results">
+        <div class="table-wrapper">
+          <table id="resultsTable">
+            <thead>
+              <tr>
+                <th data-sort="itemName">Item</th>
+                <th data-sort="buyRegion">Buy Region</th>
+                <th data-sort="buyPrice">Buy Price</th>
+                <th data-sort="sellRegion">Sell Region</th>
+                <th data-sort="sellPrice">Sell Price</th>
+                <th data-sort="marginPercent">Spread %</th>
+                <th data-sort="estimatedFees">Fees</th>
+                <th data-sort="estimatedProfit">Net Profit</th>
+                <th data-sort="volumeScore">Volume Score</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <template id="rowTemplate">
+      <tr>
+        <td class="item-name"></td>
+        <td class="buy-region"></td>
+        <td class="buy-price value"></td>
+        <td class="sell-region"></td>
+        <td class="sell-price value"></td>
+        <td class="spread-percent value"></td>
+        <td class="fees value"></td>
+        <td class="net-profit value"></td>
+        <td class="volume value"></td>
+      </tr>
+    </template>
+
+    <script src="app.js" defer></script>
+  </body>
+</html>
