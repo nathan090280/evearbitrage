@@ -10,9 +10,11 @@ const minProfitInput = document.getElementById('minProfit');
 const minMarginInput = document.getElementById('minMargin');
 const minPriceInput = document.getElementById('minPrice');
 const minVolume24hInput = document.getElementById('minVolume24h');
+const minVolume30dInput = document.getElementById('minVolume30d');
 const buyBrokerInput = document.getElementById('buyBrokerRate');
 const sellBrokerInput = document.getElementById('sellBrokerRate');
 const salesTaxInput = document.getElementById('salesTaxRate');
+const highsecCheckbox = document.getElementById('highsecOnly');
 
 let lastData = [];
 let lastGeneratedAt = null;
@@ -116,9 +118,13 @@ async function fetchArbitrage(params) {
   appendQueryNumber(url, 'minMargin', params.minMargin);
   appendQueryNumber(url, 'minPrice', params.minPrice);
   appendQueryNumber(url, 'minVolume24h', params.minVolume24h);
+  appendQueryNumber(url, 'minVolume30d', params.minVolume30d);
   appendQueryNumber(url, 'buyBrokerRate', params.buyBrokerRate);
   appendQueryNumber(url, 'sellBrokerRate', params.sellBrokerRate);
   appendQueryNumber(url, 'salesTaxRate', params.salesTaxRate);
+  if (typeof params.highsecOnly === 'boolean') {
+    url.searchParams.set('highsecOnly', params.highsecOnly ? 'true' : 'false');
+  }
   if (params.buyRegionId) url.searchParams.set('buyRegionId', params.buyRegionId);
   if (params.sellRegionId) url.searchParams.set('sellRegionId', params.sellRegionId);
 
@@ -138,11 +144,13 @@ async function handleScan(event) {
     minMargin: minMarginInput.value.trim(),
     minPrice: minPriceInput.value.trim(),
     minVolume24h: minVolume24hInput.value.trim(),
+    minVolume30d: minVolume30dInput.value.trim(),
     buyRegionId: buyRegionSelect.value,
     sellRegionId: sellRegionSelect.value,
     buyBrokerRate: percentageToDecimal(buyBrokerInput.value.trim()),
     sellBrokerRate: percentageToDecimal(sellBrokerInput.value.trim()),
-    salesTaxRate: percentageToDecimal(salesTaxInput.value.trim())
+    salesTaxRate: percentageToDecimal(salesTaxInput.value.trim()),
+    highsecOnly: highsecCheckbox.checked
   };
 
   setLoading(true);
@@ -236,6 +244,12 @@ async function loadRegions() {
     if (defaults.filters && typeof defaults.filters.minVolume24h === 'number') {
       minVolume24hInput.value = defaults.filters.minVolume24h;
     }
+    if (defaults.filters && typeof defaults.filters.minVolume30d === 'number') {
+      minVolume30dInput.value = defaults.filters.minVolume30d;
+    }
+    if (defaults.filters && typeof defaults.filters.highsecOnly === 'boolean') {
+      highsecCheckbox.checked = defaults.filters.highsecOnly;
+    }
     if (defaults.fees) {
       buyBrokerInput.value = decimalToPercentage(defaults.fees.buyBrokerRate || 0);
       sellBrokerInput.value = decimalToPercentage(defaults.fees.sellBrokerRate || 0);
@@ -257,5 +271,6 @@ setupSorting();
 loadRegions().then(() => {
   minPriceInput.value = minPriceInput.value || '300000000';
   minVolume24hInput.value = minVolume24hInput.value || '1';
+  minVolume30dInput.value = minVolume30dInput.value || '10';
   updateStatus('Ready to scan. Choose thresholds and launch.', 'info');
 });
