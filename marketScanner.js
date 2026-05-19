@@ -1,27 +1,29 @@
-const { fetchMarketOrders, delay } = require('./esiClient');
+const { fetchMarketOrders, fetchMarketHistory, delay } = require('./esiClient');
 const items = require('./itemList');
+const regions = require('./regions');
 
-const REGIONS = {
-  JITA: { id: 10000002, name: 'The Forge (Jita)' },
-  AMARR: { id: 10000043, name: 'Domain (Amarr)' }
-};
-
-const BROKER_FEE_RATE = 0.03;
-const SALES_TAX_RATE = 0.015;
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 500;
-const CATEGORY_VOLUME_SCORES = {
-  Marauder: 0.35,
-  Battleship: 0.45,
-  Cruiser: 0.65,
-  Frigate: 0.75,
-  Module: 0.6,
-  Implant: 0.55,
-  Ammo: 0.5
+const DEFAULT_FILTERS = {
+  minProfit: 50_000_000,
+  minMargin: 5,
+  minPrice: 100_000_000,
+  minVolume24h: 1,
+  buyRegionId: 10000002, // Jita
+  sellRegionId: 10000043 // Amarr
 };
-const DEFAULT_VOLUME_SCORE = 0.5;
 
-async function getLowestSellPrice(regionId, typeId) {
+const DEFAULT_FEES = {
+  buyBrokerRate: 0.0165,
+  sellBrokerRate: 0.0165,
+  salesTaxRate: 0.042
+};
+
+const REGION_INDEX = regions
+  .filter((region) => region.id)
+  .reduce((acc, region) => acc.set(region.id, region), new Map());
+
+async function getLowestSellQuote(regionId, typeId) {
   let orders;
   try {
     orders = await fetchMarketOrders({ regionId, typeId, orderType: 'sell' });
@@ -32,86 +34,134 @@ async function getLowestSellPrice(regionId, typeId) {
     return null;
   }
   if (!Array.isArray(orders) || orders.length === 0) return null;
-  let minPrice = Number.POSITIVE_INFINITY;
+  let best = null;
   for (const order of orders) {
-    if (typeof order.price === 'number' && order.price < minPrice) {
-      minPrice = order.price;
+    if (typeof order.price !== 'number') continue;
+    if (!best || order.price < best.price) {
+      best = {
+        price: order.price,
+        quantity: order.volume_remain ?? null
+      };
     }
   }
-  return Number.isFinite(minPrice) ? minPrice : null;
+  return best;
 }
 
-function buildOpportunity({ item, buyRegion, sellRegion, buyPrice, sellPrice }) {
-  const spread = sellPrice - buyPrice;
+async function getVolumeStats(regionId, typeId) {
+  let history;
+  try {
+    history = await fetchMarketHistory({ regionId, typeId });
+  } catch (error) {
+    console.error(
+      `[Scanner] Unable to load history for type ${typeId} in region ${regionId}: ${error.message}`
+    );
+    return { volume24h: 0, volume30d: 0 };
+  }
+  if (!Array.isArray(history) || history.length === 0) {
+    return { volume24h: 0, volume30d: 0 };
+  }
+
+  const sorted = [...history].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const latest = sorted[0];
+  const last30 = sorted.slice(0, 30);
+  const volume24h = latest?.volume ?? 0;
+  const volume30d = last30.reduce((sum, day) => sum + (day.volume ?? 0), 0);
+  return { volume24h, volume30d };
+}
+
+function buildOpportunity({
+  item,
+  buyRegion,
+  sellRegion,
+  buyQuote,
+  sellQuote,
+  fees,
+  volumeStats
+}) {
+  const spread = sellQuote.price - buyQuote.price;
   if (spread <= 0) {
     return null;
   }
 
-  const brokerFees = (buyPrice + sellPrice) * BROKER_FEE_RATE;
-  const salesTax = sellPrice * SALES_TAX_RATE;
+  const brokerFees = buyQuote.price * fees.buyBrokerRate + sellQuote.price * fees.sellBrokerRate;
+  const salesTax = sellQuote.price * fees.salesTaxRate;
   const totalFees = brokerFees + salesTax;
   const netProfit = spread - totalFees;
-  const spreadPercent = (spread / buyPrice) * 100;
-  const volumeScore =
-    item.volumeScore ?? CATEGORY_VOLUME_SCORES[item.category] ?? DEFAULT_VOLUME_SCORE;
+  const spreadPercent = (spread / buyQuote.price) * 100;
 
   return {
     itemName: item.name,
     buyRegion: buyRegion.name,
     sellRegion: sellRegion.name,
-    buyPrice,
-    sellPrice,
+    buyPrice: buyQuote.price,
+    sellPrice: sellQuote.price,
     marginPercent: spreadPercent,
     estimatedFees: totalFees,
     estimatedProfit: netProfit,
-    volumeScore
+    availableQuantity: buyQuote.quantity,
+    volume24h: volumeStats.volume24h,
+    volume30d: volumeStats.volume30d
   };
 }
 
-async function evaluateItem(item) {
-  const jitaPrice = await getLowestSellPrice(REGIONS.JITA.id, item.typeId);
-  const amarrPrice = await getLowestSellPrice(REGIONS.AMARR.id, item.typeId);
+async function evaluateItem(item, context) {
+  const { buyRegion, sellRegion, fees, filters } = context;
+  const buyQuote = await getLowestSellQuote(buyRegion.id, item.typeId);
+  const sellQuote = await getLowestSellQuote(sellRegion.id, item.typeId);
 
-  if (jitaPrice === null || amarrPrice === null) {
+  if (!buyQuote || !sellQuote) {
     return null;
   }
 
-  const opportunities = [];
-
-  const jitaToAmarr = buildOpportunity({
-    item,
-    buyRegion: REGIONS.JITA,
-    sellRegion: REGIONS.AMARR,
-    buyPrice: jitaPrice,
-    sellPrice: amarrPrice
-  });
-
-  if (jitaToAmarr) opportunities.push(jitaToAmarr);
-
-  const amarrToJita = buildOpportunity({
-    item,
-    buyRegion: REGIONS.AMARR,
-    sellRegion: REGIONS.JITA,
-    buyPrice: amarrPrice,
-    sellPrice: jitaPrice
-  });
-
-  if (amarrToJita) opportunities.push(amarrToJita);
-
-  if (!opportunities.length) {
+  if (buyQuote.price < filters.minPrice) {
     return null;
   }
 
-  opportunities.sort((a, b) => b.netProfit - a.netProfit);
-  return {
+  const volumeStats = await getVolumeStats(sellRegion.id, item.typeId);
+  if (volumeStats.volume24h < filters.minVolume24h) {
+    return null;
+  }
+
+  return buildOpportunity({
     item,
-    jitaPrice,
-    amarrPrice,
-    bestOpportunity: opportunities[0]
-  };
+    buyRegion,
+    sellRegion,
+    buyQuote,
+    sellQuote,
+    fees,
+    volumeStats
+  });
 }
 
-async function scanMarket({ minProfit = 0, minMargin = 0 }) {
+async function scanMarket(options = {}) {
+  const filters = {
+    ...DEFAULT_FILTERS,
+    ...Object.fromEntries(
+      Object.entries(options).filter(([key]) =>
+        [
+          'minProfit',
+          'minMargin',
+          'minPrice',
+          'minVolume24h',
+          'buyRegionId',
+          'sellRegionId'
+        ].includes(key)
+      )
+    )
+  };
+
+  const fees = {
+    ...DEFAULT_FEES,
+    ...Object.fromEntries(
+      Object.entries(options).filter(([key]) =>
+        ['buyBrokerRate', 'sellBrokerRate', 'salesTaxRate'].includes(key)
+      )
+    )
+  };
+
+  const buyRegion = REGION_INDEX.get(Number(filters.buyRegionId)) || REGION_INDEX.get(10000002);
+  const sellRegion = REGION_INDEX.get(Number(filters.sellRegionId)) || REGION_INDEX.get(10000043);
+
   const results = [];
   let missingData = 0;
 
@@ -119,25 +169,21 @@ async function scanMarket({ minProfit = 0, minMargin = 0 }) {
     const batch = items.slice(i, i + BATCH_SIZE);
 
     for (const item of batch) {
-      let evaluation;
+      let opportunity;
       try {
-        evaluation = await evaluateItem(item);
+        opportunity = await evaluateItem(item, { buyRegion, sellRegion, fees, filters });
       } catch (error) {
         console.error(`[Scanner] Evaluation failed for ${item.name}: ${error.message}`);
         missingData += 1;
         continue;
       }
-      if (!evaluation) {
+      if (!opportunity) {
         missingData += 1;
         continue;
       }
 
-      const { bestOpportunity } = evaluation;
-      if (
-        bestOpportunity.estimatedProfit >= minProfit &&
-        bestOpportunity.marginPercent >= minMargin
-      ) {
-        results.push(bestOpportunity);
+      if (opportunity.estimatedProfit >= filters.minProfit && opportunity.marginPercent >= filters.minMargin) {
+        results.push(opportunity);
       }
     }
 
@@ -152,16 +198,12 @@ async function scanMarket({ minProfit = 0, minMargin = 0 }) {
     opportunities: results,
     meta: {
       generatedAt: new Date().toISOString(),
-      filters: {
-        minProfit,
-        minMargin
-      },
+      filters,
+      fees,
       totals: {
         totalItems: items.length,
         filteredCount: results.length,
         missingData,
-        brokerFeeRate: BROKER_FEE_RATE,
-        salesTaxRate: SALES_TAX_RATE,
         batchSize: BATCH_SIZE,
         batchDelayMs: BATCH_DELAY_MS
       }
@@ -172,9 +214,9 @@ async function scanMarket({ minProfit = 0, minMargin = 0 }) {
 module.exports = {
   scanMarket,
   constants: {
-    REGIONS,
-    BROKER_FEE_RATE,
-    SALES_TAX_RATE,
+    regions,
+    DEFAULT_FILTERS,
+    DEFAULT_FEES,
     BATCH_SIZE,
     BATCH_DELAY_MS
   }

@@ -10,38 +10,75 @@
     <header>
       <div class="brand">
         <h1>EVE Arbitrage Scanner</h1>
-        <p>High-value market spread finder for Jita ↔ Amarr</p>
+        <p>High-value market spread finder across top high-sec hubs</p>
       </div>
     </header>
 
     <main>
       <section class="controls">
-        <form id="scanForm">
-          <label>
-            Min Profit (ISK)
-            <input
-              type="number"
-              id="minProfit"
-              name="minProfit"
-              placeholder="10000000"
-              min="0"
-            />
-          </label>
+        <form id="scanForm" class="control-grid">
+          <div class="control-card">
+            <h3>Regions</h3>
+            <label>
+              Buy Region
+              <select id="buyRegion" name="buyRegion"></select>
+            </label>
+            <label>
+              Sell Region
+              <select id="sellRegion" name="sellRegion"></select>
+            </label>
+          </div>
 
-          <label>
-            Min Margin (%)
-            <input
-              type="number"
-              id="minMargin"
-              name="minMargin"
-              placeholder="5"
-              min="0"
-              max="100"
-              step="0.1"
-            />
-          </label>
+          <div class="control-card">
+            <h3>Profit Filters</h3>
+            <label>
+              Min Profit (ISK)
+              <input type="number" id="minProfit" name="minProfit" min="0" placeholder="10000000" />
+            </label>
+            <label>
+              Min Margin (%)
+              <input
+                type="number"
+                id="minMargin"
+                name="minMargin"
+                placeholder="5"
+                min="0"
+                max="100"
+                step="0.1"
+              />
+            </label>
+            <label>
+              Min Price (ISK)
+              <input type="number" id="minPrice" name="minPrice" min="0" placeholder="300000000" />
+            </label>
+          </div>
 
-          <button type="submit" id="scanButton">Scan Now</button>
+          <div class="control-card">
+            <h3>Volume & Fees</h3>
+            <label>
+              Min Sales (24h)
+              <input type="number" id="minVolume24h" name="minVolume24h" min="0" placeholder="1" />
+            </label>
+            <div class="inline-fields">
+              <label>
+                Buy Broker (%)
+                <input type="number" id="buyBrokerRate" name="buyBrokerRate" step="0.01" min="0" />
+              </label>
+              <label>
+                Sell Broker (%)
+                <input type="number" id="sellBrokerRate" name="sellBrokerRate" step="0.01" min="0" />
+              </label>
+              <label>
+                Sales Tax (%)
+                <input type="number" id="salesTaxRate" name="salesTaxRate" step="0.01" min="0" />
+              </label>
+            </div>
+          </div>
+
+          <div class="control-card actions">
+            <h3>Run Scan</h3>
+            <button type="submit" id="scanButton">Scan Now</button>
+          </div>
         </form>
         <div class="status" id="status"></div>
       </section>
@@ -56,10 +93,12 @@
                 <th data-sort="buyPrice">Buy Price</th>
                 <th data-sort="sellRegion">Sell Region</th>
                 <th data-sort="sellPrice">Sell Price</th>
+                <th data-sort="availableQuantity">Qty Available</th>
                 <th data-sort="marginPercent">Spread %</th>
                 <th data-sort="estimatedFees">Fees</th>
                 <th data-sort="estimatedProfit">Net Profit</th>
-                <th data-sort="volumeScore">Volume Score</th>
+                <th data-sort="volume24h">Sales 24h</th>
+                <th data-sort="volume30d">Sales 30d</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -75,10 +114,12 @@
         <td class="buy-price value"></td>
         <td class="sell-region"></td>
         <td class="sell-price value"></td>
+        <td class="quantity value"></td>
         <td class="spread-percent value"></td>
         <td class="fees value"></td>
         <td class="net-profit value"></td>
-        <td class="volume value"></td>
+        <td class="volume24 value"></td>
+        <td class="volume30 value"></td>
       </tr>
     </template>
 

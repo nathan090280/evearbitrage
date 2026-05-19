@@ -4,9 +4,19 @@ const table = document.getElementById('resultsTable');
 const tbody = table.querySelector('tbody');
 const template = document.getElementById('rowTemplate');
 const scanButton = document.getElementById('scanButton');
+const buyRegionSelect = document.getElementById('buyRegion');
+const sellRegionSelect = document.getElementById('sellRegion');
+const minProfitInput = document.getElementById('minProfit');
+const minMarginInput = document.getElementById('minMargin');
+const minPriceInput = document.getElementById('minPrice');
+const minVolume24hInput = document.getElementById('minVolume24h');
+const buyBrokerInput = document.getElementById('buyBrokerRate');
+const sellBrokerInput = document.getElementById('sellBrokerRate');
+const salesTaxInput = document.getElementById('salesTaxRate');
 
 let lastData = [];
 let lastGeneratedAt = null;
+let regionOptions = [];
 let currentSort = {
   key: 'estimatedProfit',
   direction: 'desc'
@@ -47,11 +57,17 @@ function renderRows(data) {
     clone.querySelector('.buy-price').textContent = formatISK(row.buyPrice);
     clone.querySelector('.sell-region').textContent = row.sellRegion;
     clone.querySelector('.sell-price').textContent = formatISK(row.sellPrice);
+    clone.querySelector('.quantity').textContent = row.availableQuantity
+      ? row.availableQuantity.toLocaleString()
+      : '—';
     clone.querySelector('.spread-percent').textContent = formatPercent(row.marginPercent);
     clone.querySelector('.fees').textContent = formatISK(row.estimatedFees);
     clone.querySelector('.net-profit').textContent = formatISK(row.estimatedProfit);
-    clone.querySelector('.volume').textContent = row.volumeScore
-      ? `${(row.volumeScore * 100).toFixed(0)}%`
+    clone.querySelector('.volume24').textContent = row.volume24h
+      ? row.volume24h.toLocaleString()
+      : '—';
+    clone.querySelector('.volume30').textContent = row.volume30d
+      ? row.volume30d.toLocaleString()
       : '—';
     tbody.appendChild(clone);
   });
@@ -72,10 +88,39 @@ function sortData(data, key, direction) {
   return mapped;
 }
 
-async function fetchArbitrage(minProfit, minMargin) {
+function appendQueryNumber(url, key, input) {
+  if (input === undefined || input === null) return;
+
+  let numberValue;
+  if (typeof input === 'number') {
+    numberValue = input;
+  } else if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (trimmed === '') return;
+    numberValue = Number.parseFloat(trimmed);
+  } else if (typeof input.value === 'string') {
+    const trimmed = input.value.trim();
+    if (trimmed === '') return;
+    numberValue = Number.parseFloat(trimmed);
+  } else {
+    return;
+  }
+
+  if (!Number.isFinite(numberValue)) return;
+  url.searchParams.set(key, String(numberValue));
+}
+
+async function fetchArbitrage(params) {
   const url = new URL('/api/arbitrage', window.location.origin);
-  if (minProfit) url.searchParams.set('minProfit', minProfit);
-  if (minMargin) url.searchParams.set('minMargin', minMargin);
+  appendQueryNumber(url, 'minProfit', params.minProfit);
+  appendQueryNumber(url, 'minMargin', params.minMargin);
+  appendQueryNumber(url, 'minPrice', params.minPrice);
+  appendQueryNumber(url, 'minVolume24h', params.minVolume24h);
+  appendQueryNumber(url, 'buyBrokerRate', params.buyBrokerRate);
+  appendQueryNumber(url, 'sellBrokerRate', params.sellBrokerRate);
+  appendQueryNumber(url, 'salesTaxRate', params.salesTaxRate);
+  if (params.buyRegionId) url.searchParams.set('buyRegionId', params.buyRegionId);
+  if (params.sellRegionId) url.searchParams.set('sellRegionId', params.sellRegionId);
 
   const response = await fetch(url);
   if (!response.ok) {
@@ -88,14 +133,23 @@ async function fetchArbitrage(minProfit, minMargin) {
 
 async function handleScan(event) {
   event.preventDefault();
-  const minProfit = form.minProfit.value.trim();
-  const minMargin = form.minMargin.value.trim();
+  const params = {
+    minProfit: minProfitInput.value.trim(),
+    minMargin: minMarginInput.value.trim(),
+    minPrice: minPriceInput.value.trim(),
+    minVolume24h: minVolume24hInput.value.trim(),
+    buyRegionId: buyRegionSelect.value,
+    sellRegionId: sellRegionSelect.value,
+    buyBrokerRate: percentageToDecimal(buyBrokerInput.value.trim()),
+    sellBrokerRate: percentageToDecimal(sellBrokerInput.value.trim()),
+    salesTaxRate: percentageToDecimal(salesTaxInput.value.trim())
+  };
 
   setLoading(true);
   updateStatus('Scanning ESI… this can take up to 20 seconds depending on cache.', 'info');
 
   try {
-    const payload = await fetchArbitrage(minProfit, minMargin);
+    const payload = await fetchArbitrage(params);
     lastGeneratedAt = payload.generatedAt;
     lastData = payload.opportunities ?? [];
     if (!lastData.length) {
@@ -136,6 +190,72 @@ function setupSorting() {
   });
 }
 
+function percentageToDecimal(value) {
+  if (!value) return undefined;
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return undefined;
+  return parsed / 100;
+}
+
+function decimalToPercentage(value) {
+  if (typeof value !== 'number') return '';
+  return (value * 100).toFixed(2).replace(/\.00$/, '');
+}
+
+function populateRegionSelect(select, regionsList, defaultId) {
+  select.innerHTML = '';
+  regionsList.forEach((region) => {
+    const option = document.createElement('option');
+    option.value = region.id;
+    option.textContent = region.name;
+    if (region.id === defaultId) {
+      option.selected = true;
+    }
+    select.appendChild(option);
+  });
+}
+
+async function loadRegions() {
+  try {
+    const response = await fetch('/api/regions');
+    if (!response.ok) throw new Error('Failed to load region list');
+    const data = await response.json();
+    regionOptions = data.regions ?? [];
+    const defaults = data.defaults ?? {};
+    populateRegionSelect(buyRegionSelect, regionOptions, defaults.filters?.buyRegionId);
+    populateRegionSelect(sellRegionSelect, regionOptions, defaults.filters?.sellRegionId);
+    if (defaults.filters && typeof defaults.filters.minProfit === 'number') {
+      minProfitInput.value = defaults.filters.minProfit;
+    }
+    if (defaults.filters && typeof defaults.filters.minMargin === 'number') {
+      minMarginInput.value = defaults.filters.minMargin;
+    }
+    if (defaults.filters && typeof defaults.filters.minPrice === 'number') {
+      minPriceInput.value = defaults.filters.minPrice;
+    }
+    if (defaults.filters && typeof defaults.filters.minVolume24h === 'number') {
+      minVolume24hInput.value = defaults.filters.minVolume24h;
+    }
+    if (defaults.fees) {
+      buyBrokerInput.value = decimalToPercentage(defaults.fees.buyBrokerRate || 0);
+      sellBrokerInput.value = decimalToPercentage(defaults.fees.sellBrokerRate || 0);
+      salesTaxInput.value = decimalToPercentage(defaults.fees.salesTaxRate || 0);
+    }
+  } catch (error) {
+    console.error(error);
+    regionOptions = [
+      { id: 10000002, name: 'The Forge (Jita)' },
+      { id: 10000043, name: 'Domain (Amarr)' }
+    ];
+    populateRegionSelect(buyRegionSelect, regionOptions, 10000002);
+    populateRegionSelect(sellRegionSelect, regionOptions, 10000043);
+  }
+}
+
 form.addEventListener('submit', handleScan);
 setupSorting();
-updateStatus('Ready to scan. Choose thresholds and launch.', 'info');
+loadRegions().then(() => {
+  minPriceInput.value = minPriceInput.value || '300000000';
+  minVolume24hInput.value = minVolume24hInput.value || '1';
+  updateStatus('Ready to scan. Choose thresholds and launch.', 'info');
+});

@@ -2,7 +2,21 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const path = require('path');
 const express = require('express');
-const { scanMarket } = require('./marketScanner');
+const { scanMarket, constants } = require('./marketScanner');
+
+const { regions, DEFAULT_FILTERS, DEFAULT_FEES } = constants;
+
+const numberFromQuery = (value) => {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+};
+
+const intFromQuery = (value) => {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isNaN(parsed) ? undefined : parsed;
+};
 
 const PORT = process.env.PORT || 4000;
 const app = express();
@@ -15,13 +29,33 @@ app.use((req, _res, next) => {
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
 app.get('/api/arbitrage', async (req, res) => {
-  const minProfit = Number.parseFloat(req.query.minProfit) || 0;
-  const minMargin = Number.parseFloat(req.query.minMargin) || 0;
+  const numericKeys = [
+    'minProfit',
+    'minMargin',
+    'minPrice',
+    'minVolume24h',
+    'buyBrokerRate',
+    'sellBrokerRate',
+    'salesTaxRate'
+  ];
+
+  const options = {};
+  numericKeys.forEach((key) => {
+    const value = numberFromQuery(req.query[key]);
+    if (value !== undefined) {
+      options[key] = value;
+    }
+  });
+
+  const buyRegionId = intFromQuery(req.query.buyRegionId);
+  if (buyRegionId) options.buyRegionId = buyRegionId;
+  const sellRegionId = intFromQuery(req.query.sellRegionId);
+  if (sellRegionId) options.sellRegionId = sellRegionId;
 
   try {
-    const { opportunities, meta } = await scanMarket({ minProfit, minMargin });
+    const { opportunities, meta } = await scanMarket(options);
     console.info(
-      `[API] Scan success — filters profit>=${minProfit} margin>=${minMargin}, matches=${opportunities.length}`
+      `[API] Scan success — buyRegion=${meta.filters.buyRegionId} sellRegion=${meta.filters.sellRegionId} matches=${opportunities.length}`
     );
     res.setHeader('X-Arbitrage-Generated-At', meta.generatedAt);
     res.json(opportunities);
@@ -32,6 +66,19 @@ app.get('/api/arbitrage', async (req, res) => {
       details: error.message
     });
   }
+});
+
+app.get('/api/regions', (_req, res) => {
+  res.json({
+    regions,
+    defaults: {
+      filters: {
+        ...DEFAULT_FILTERS,
+        maxPrice: null
+      },
+      fees: DEFAULT_FEES
+    }
+  });
 });
 
 app.get('/api/health', (req, res) => {

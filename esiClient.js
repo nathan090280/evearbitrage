@@ -92,6 +92,21 @@ async function fetchTypeInfo(typeId) {
   return payload;
 }
 
+async function fetchMarketHistory({ regionId, typeId }) {
+  const key = cacheKey('history', regionId, typeId);
+  const cached = getCached(key);
+  if (cached) return cached;
+
+  const params = new URLSearchParams({
+    type_id: String(typeId),
+    datasource: 'tranquility'
+  });
+  const url = `${BASE_URL}/markets/${regionId}/history/?${params.toString()}`;
+  const payload = await rateLimitedGet(url);
+  setCached(key, payload);
+  return payload;
+}
+
 async function fetchRegion(regionId) {
   const key = cacheKey('region', regionId);
   const cached = getCached(key);
@@ -106,6 +121,7 @@ async function fetchRegion(regionId) {
 module.exports = {
   fetchMarketOrders,
   fetchTypeInfo,
+  fetchMarketHistory,
   fetchRegion,
   delay
 };
