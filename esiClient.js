@@ -1,3 +1,4 @@
+const https = require('https');
 const axios = require('axios');
 
 const BASE_URL = 'https://esi.evetech.net/latest';
@@ -14,18 +15,25 @@ const cacheKey = (...parts) => parts.join(':');
 
 function getCached(key) {
   const hit = cache.get(key);
-  if (!hit) return null;
+  if (!hit) {
+    console.info(`[Cache] miss ${key}`);
+    return null;
+  }
   const isFresh = Date.now() - hit.timestamp < CACHE_TTL_MS;
   if (!isFresh) {
+    console.info(`[Cache] stale ${key}`);
     cache.delete(key);
     return null;
   }
+  console.info(`[Cache] hit ${key}`);
   return hit.value;
 }
 
 function setCached(key, value) {
   cache.set(key, { value, timestamp: Date.now() });
 }
+
+const insecureAgent = new https.Agent({ rejectUnauthorized: false });
 
 async function rateLimitedGet(url, attempt = 0) {
   const wait = Math.max(0, lastRequestTime + MIN_DELAY_MS - Date.now());
@@ -34,11 +42,13 @@ async function rateLimitedGet(url, attempt = 0) {
   }
 
   try {
+    console.info(`[ESI] GET ${url}`);
     const response = await axios.get(url, {
       headers: {
         'User-Agent': 'EveArbitrageTool/1.0 (github.com/user)',
         'Accept-Language': 'en'
       },
+      httpsAgent: insecureAgent,
       timeout: 15000
     });
     lastRequestTime = Date.now();

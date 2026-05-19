@@ -10,9 +10,27 @@ const BROKER_FEE_RATE = 0.03;
 const SALES_TAX_RATE = 0.015;
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 500;
+const CATEGORY_VOLUME_SCORES = {
+  Marauder: 0.35,
+  Battleship: 0.45,
+  Cruiser: 0.65,
+  Frigate: 0.75,
+  Module: 0.6,
+  Implant: 0.55,
+  Ammo: 0.5
+};
+const DEFAULT_VOLUME_SCORE = 0.5;
 
 async function getLowestSellPrice(regionId, typeId) {
-  const orders = await fetchMarketOrders({ regionId, typeId, orderType: 'sell' });
+  let orders;
+  try {
+    orders = await fetchMarketOrders({ regionId, typeId, orderType: 'sell' });
+  } catch (error) {
+    console.error(
+      `[Scanner] Unable to load sell orders for type ${typeId} in region ${regionId}: ${error.message}`
+    );
+    return null;
+  }
   if (!Array.isArray(orders) || orders.length === 0) return null;
   let minPrice = Number.POSITIVE_INFINITY;
   for (const order of orders) {
@@ -34,22 +52,19 @@ function buildOpportunity({ item, buyRegion, sellRegion, buyPrice, sellPrice }) 
   const totalFees = brokerFees + salesTax;
   const netProfit = spread - totalFees;
   const spreadPercent = (spread / buyPrice) * 100;
+  const volumeScore =
+    item.volumeScore ?? CATEGORY_VOLUME_SCORES[item.category] ?? DEFAULT_VOLUME_SCORE;
 
   return {
-    typeId: item.typeId,
     itemName: item.name,
-    category: item.category,
-    buyRegion,
-    sellRegion,
+    buyRegion: buyRegion.name,
+    sellRegion: sellRegion.name,
     buyPrice,
     sellPrice,
-    spread,
-    spreadPercent,
-    brokerFees,
-    salesTax,
+    marginPercent: spreadPercent,
     estimatedFees: totalFees,
-    netProfit,
-    volumePerDay: null
+    estimatedProfit: netProfit,
+    volumeScore
   };
 }
 
@@ -104,7 +119,14 @@ async function scanMarket({ minProfit = 0, minMargin = 0 }) {
     const batch = items.slice(i, i + BATCH_SIZE);
 
     for (const item of batch) {
-      const evaluation = await evaluateItem(item);
+      let evaluation;
+      try {
+        evaluation = await evaluateItem(item);
+      } catch (error) {
+        console.error(`[Scanner] Evaluation failed for ${item.name}: ${error.message}`);
+        missingData += 1;
+        continue;
+      }
       if (!evaluation) {
         missingData += 1;
         continue;
@@ -112,8 +134,8 @@ async function scanMarket({ minProfit = 0, minMargin = 0 }) {
 
       const { bestOpportunity } = evaluation;
       if (
-        bestOpportunity.netProfit >= minProfit &&
-        bestOpportunity.spreadPercent >= minMargin
+        bestOpportunity.estimatedProfit >= minProfit &&
+        bestOpportunity.marginPercent >= minMargin
       ) {
         results.push(bestOpportunity);
       }
@@ -124,24 +146,26 @@ async function scanMarket({ minProfit = 0, minMargin = 0 }) {
     }
   }
 
-  results.sort((a, b) => b.netProfit - a.netProfit);
+  results.sort((a, b) => b.estimatedProfit - a.estimatedProfit);
 
   return {
-    generatedAt: new Date().toISOString(),
-    filters: {
-      minProfit,
-      minMargin
-    },
-    summary: {
-      totalItems: items.length,
-      filteredCount: results.length,
-      missingData,
-      brokerFeeRate: BROKER_FEE_RATE,
-      salesTaxRate: SALES_TAX_RATE,
-      batchSize: BATCH_SIZE,
-      batchDelayMs: BATCH_DELAY_MS
-    },
-    opportunities: results
+    opportunities: results,
+    meta: {
+      generatedAt: new Date().toISOString(),
+      filters: {
+        minProfit,
+        minMargin
+      },
+      totals: {
+        totalItems: items.length,
+        filteredCount: results.length,
+        missingData,
+        brokerFeeRate: BROKER_FEE_RATE,
+        salesTaxRate: SALES_TAX_RATE,
+        batchSize: BATCH_SIZE,
+        batchDelayMs: BATCH_DELAY_MS
+      }
+    }
   };
 }
 

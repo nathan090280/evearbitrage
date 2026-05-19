@@ -113,7 +113,7 @@ async function handleScan(event) {
     renderRows(sorted);
   } catch (error) {
     console.error(error);
-    updateStatus('Scan failed. Check server logs or try again shortly.', 'error');
+    updateStatus(`Scan failed: ${error.message}`, 'error');
   } finally {
     setLoading(false);
   }
